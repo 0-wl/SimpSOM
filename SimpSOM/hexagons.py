@@ -2,6 +2,7 @@
 Hexagonal tiling library
 
 F. Comitani @2017 
+O. Pellicer @2020
 """
 
 import numpy as np
@@ -31,7 +32,7 @@ def coorToHex(x,y):
     return [newx,newy]    
     
 
-def plot_hex(fig, centers, weights):
+def plot_hex(fig, centers, weights, edges=[], cmap='viridis', radius=0.95, ax=None):
     
     """Plot an hexagonal grid based on the nodes positions and color the tiles
        according to their weights.
@@ -48,32 +49,34 @@ def plot_hex(fig, centers, weights):
                 
     """
 
-    ax = fig.add_subplot(111, aspect='equal')
+    ax = fig.add_subplot(111, aspect='equal') if ax == None else ax
 
     xpoints = [x[0]  for x in centers]
     ypoints = [x[1]  for x in centers]
     patches = []
 
-    if any(isinstance(el, list) for el in weights) and len(weights[0])==3:
+    weights_are_colors= any(isinstance(el, list) for el in weights) and len(weights[0])==3
     
+    if weights_are_colors:
         for x,y,w in zip(xpoints,ypoints,weights):
-            hexagon = RegularPolygon((x,y), numVertices=6, radius=.95/np.sqrt(3), 
+            hexagon = RegularPolygon((x,y), numVertices=6, radius=radius/np.sqrt(3), 
                                 orientation=np.radians(0), 
                                 facecolor=w)
             ax.add_patch(hexagon)
-
-    else:
-            
-        cmap = plt.get_cmap('viridis')
-        for x,y,w in zip(xpoints,ypoints,weights):
-            hexagon = RegularPolygon((x,y), numVertices=6, radius=.95/np.sqrt(3), 
-                                orientation=np.radians(0), 
-                                facecolor=cmap(w))
-            patches.append(hexagon) 
-
         p = PatchCollection(patches)
-        p.set_array(np.array(weights))
-        ax.add_collection(p)
+        
+    else:
+        cmap = plt.get_cmap(cmap)
+        for x,y,w in zip(xpoints,ypoints,weights):
+            hexagon = RegularPolygon((x,y), numVertices=6, radius=radius/np.sqrt(3), 
+                                orientation=np.radians(0))
+            patches.append(hexagon) 
+        p = PatchCollection(patches, cmap=cmap, 
+                            edgecolors= [cmap(e) for e in edges] if edges!=[] else None, 
+                            linewidths= 5 if edges!=[] else None)
+        
+    p.set_array(np.array(weights))
+    ax.add_collection(p)
         
     ax.axis('off')
     ax.autoscale_view()

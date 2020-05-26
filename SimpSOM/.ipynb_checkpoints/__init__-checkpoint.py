@@ -1,8 +1,9 @@
 """
-SimpSOM (Simple Self-Organizing Maps) v1.3.4
+SimpSOM (Simple Self-Organizing Maps) v1.4
 F. Comitani @2017 
 F. Comitani @2018 
 F. Comitani @2019 
+O. Pellicer @2020
  
 A lightweight python library for Kohonen Self-Organising Maps (SOM).
 """
@@ -18,20 +19,23 @@ from matplotlib import cm
 import matplotlib.patches as mpatches
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-import SimpSOM.hexagons as hx
-import SimpSOM.densityPeak as dp
-import SimpSOM.qualityThreshold as qt
+import sys
+sys.path.append('../SimpSOM/')
+from SimpSOM import hexagons as hx
+from SimpSOM import densityPeak as dp
+from SimpSOM import qualityThreshold as qt
 
 from sklearn.decomposition import PCA
 from sklearn import cluster
 
 #from joblib import Parallel, delayed
-#test2
 
 class somNet:
     """ Kohonen SOM Network class. """
 
-    def __init__(self, netHeight, netWidth, data, loadFile=None, PCI=0, PBC=0, n_jobs=-1):
+    def __init__(self, netHeight, netWidth, data, loadFile=None, PCI=0, PBC=0, n_jobs=-1,
+                 plot_dpi=70, plot_path='./', plot_show=True, plot_printout=True, plot_bar=False,
+                 plot_radius=.95, plot_text_size=20, plot_cmap='viridis', plot_width=50):
 
         """Initialise the SOM network.
 
@@ -47,6 +51,9 @@ class somNet:
                 warning: only quality threshold clustering algorithm works with PBC.
             n_jobs (int) [WORK IN PROGRESS]: Number of parallel processes (-1 use all available)   
         """
+        self.set_plot_settings(dpi=plot_dpi, path=plot_path, show=plot_show, printout=plot_printout, 
+                               bar=plot_bar, radius=plot_radius, text_size=plot_text_size, cmap= plot_cmap, 
+                               width=plot_width)
     
         """ Switch to activate special workflow if running the colours example. """
         self.colorEx=False
@@ -68,6 +75,7 @@ class somNet:
 
         self.nodeList=[]
         self.data=data.reshape(np.array([data.shape[0], data.shape[1]]))
+        self.clusters= []
 
         """ Load the weights from file, generate them randomly or from PCA. """
 
@@ -115,6 +123,29 @@ class somNet:
                 for y in range(self.netHeight):
                     self.nodeList.append(somNode(x,y, self.data.shape[1], self.netHeight, self.netWidth, self.PBC, weiArray=weiArray[countWei]))
                     countWei+=1
+                    
+    def set_plot_settings(self, dpi=70, path='./', show=True, printout=True, bar=False,
+                                radius= 0.95, text_size=20, cmap='viridis', width=50):
+        self.dpi= dpi
+        self.path= path
+        self.show= show
+        self.printout= printout
+        self.bar= bar
+        self.radius= radius
+        self.text_size= text_size * 50/width
+        self.cmap= cmap
+        self.widthP= width
+        
+    def get_custom_topographic_error(self, data):
+        '''
+            Returns a meassure of the topographic error.
+            It is NOT the actual topographic error, but something similar
+        '''
+        error= 0
+        for row in data:
+            bmu1, bmu2 = self.find_bmu(row)
+            error+= bmu1.get_distance(bmu2.weights)
+        return error/len(data)
 
     def save(self, fileName='somNet_trained', path='./'):
     
@@ -168,14 +199,15 @@ class somNet:
             bmu (somNode): The best matching unit node.
             
         """
-    
+        bmu1= self.nodeList[0]
         minVal=np.finfo(np.float).max
         for node in self.nodeList:
             dist=node.get_distance(vec)
             if dist < minVal:
                 minVal=dist
-                bmu=node
-        return bmu  
+                bmu2= bmu1
+                bmu1= node
+        return bmu1, bmu2
             
 
     def train(self, startLearnRate=0.01, epochs=-1):
@@ -215,7 +247,7 @@ class somNet:
             
             inputVec = self.data[np.random.randint(0, self.data.shape[0]), :].reshape(np.array([self.data.shape[1]]))
             
-            bmu=self.find_bmu(inputVec)
+            bmu, _=self.find_bmu(inputVec)
             
             for node in self.nodeList:
                 node.update_weights(inputVec, self.sigma, self.lrate, bmu)
@@ -223,7 +255,7 @@ class somNet:
         print("\rTraining SOM... done!")
 
         
-    def nodes_graph(self, colnum=0, show=False, printout=True, path='./', colname=None):
+    def nodes_graph(self, colnum=0, colname=None, colors=[], return_ax_only=False):
     
         """Plot a 2D map with hexagonal nodes and weights values
 
@@ -238,52 +270,45 @@ class somNet:
             colname = str(colnum)
 
         centers = [[node.pos[0],node.pos[1]] for node in self.nodeList]
-
-        widthP=100
-        dpi=72
-        xInch = self.netWidth*widthP/dpi 
-        yInch = self.netHeight*widthP/dpi 
-        fig=plt.figure(figsize=(xInch, yInch), dpi=dpi)
+        fig= self.get_fig()
 
         if self.colorEx==True:
             cols = [[np.float(node.weights[0]),np.float(node.weights[1]),np.float(node.weights[2])]for node in self.nodeList]   
-            ax = hx.plot_hex(fig, centers, cols)
-            ax.set_title('Node Grid w Color Features', size=80)
-            printName=os.path.join(path,'nodesColors.png')
+            ax = hx.plot_hex(fig, centers, cols, radius=self.radius, cmap=self.cmap)
+            ax.set_title('Node Grid with Color Features', size=self.text_size)
+            printName=os.path.join(self.path,'nodesColors.png')
 
         else:
             cols = [node.weights[colnum] for node in self.nodeList]
-            ax = hx.plot_hex(fig, centers, cols)
-            ax.set_title('Node Grid w Feature ' +  colname, size=80)
-            divider = make_axes_locatable(ax)
-            cax = divider.append_axes("right", size="5%", pad=0.0)
-            cbar=plt.colorbar(ax.collections[0], cax=cax)
-            cbar.set_label(colname, size=80, labelpad=50)
-            cbar.ax.tick_params(labelsize=60)
+            ax = hx.plot_hex(fig, centers, cols, edges=colors, radius=self.radius)
+            if colname is None:
+                ax.set_title('Feature #' +  str(colnum), size=self.text_size)
+            else:
+                ax.set_title(str(colname), size=self.text_size)
+                
+            if self.bar:
+                divider = make_axes_locatable(ax)
+                cax = divider.append_axes("right", size="5%", pad=0.0)
+                cbar=plt.colorbar(ax.collections[0], cax=cax)
+                cbar.set_label(colname, size=self.text_size, labelpad=10)
+                cbar.ax.tick_params(labelsize=self.text_size)
             plt.sca(ax)
-            printName=os.path.join(path,'nodesFeature_'+str(colnum)+'.png')
+            printName=os.path.join(self.path,'SOM_'+str(colnum if colname is None else colname)+'.png')
             
-        if printout==True:
-            plt.savefig(printName, bbox_inches='tight', dpi=dpi)
-        if show==True:
-            plt.show()
-        if show!=False and printout!=False:
-            plt.clf()
+        if not return_ax_only:
+            if self.printout==True:
+                plt.savefig(printName, bbox_inches='tight', dpi=self.dpi)
+            if self.show==True:
+                plt.show()
+            if self.show!=False and self.printout!=False:
+                plt.clf()
+            
+        return ax
 
-
-    def diff_graph(self, show=False, printout=True, returns=False, path='./'):
-    
-        """Plot a 2D map with nodes and weights difference among neighbouring nodes.
-
-        Args:
-            show (bool, optional): Choose to display the plot.
-            printout (bool, optional): Choose to save the plot to a file.
-            returns (bool, optional): Choose to return the difference value.
-
-        Returns:
-            (list): difference value for each node.             
-        """
-        
+    def get_diffs(self):
+        '''
+            Obtain summed distance to neighbouring nodes
+        '''
         neighbours=[]
         for node in self.nodeList:
             nodelist=[]
@@ -296,42 +321,61 @@ class somNet:
         for node, neighbours in zip(self.nodeList, neighbours):
             diff=0
             for nb in neighbours:
-                diff=diff+node.get_distance(nb.weights)
+                dist= node.get_distance(nb.weights)
+                diff=diff + dist
             diffs.append(diff)  
 
         centers = [[node.pos[0],node.pos[1]] for node in self.nodeList]
-
-        if show==True or printout==True:
         
-            widthP=100
-            dpi=72
-            xInch = self.netWidth*widthP/dpi 
-            yInch = self.netHeight*widthP/dpi 
-            fig=plt.figure(figsize=(xInch, yInch), dpi=dpi)
+        return diffs, neighbours, centers
+    
+    def get_fig(self):
+        
+        xInch = self.netWidth*self.widthP/self.dpi 
+        yInch = self.netHeight*self.widthP/self.dpi
+        
+        return plt.figure(figsize=(xInch, yInch), dpi=self.dpi)
 
-            ax = hx.plot_hex(fig, centers, diffs)
-            ax.set_title('Nodes Grid w Weights Difference', size=80)
+    def diff_graph(self, colors=[], return_ax_only=False):
+    
+        """Plot a 2D map with nodes and weights difference among neighbouring nodes.
+
+        Args:
+            show (bool, optional): Choose to display the plot.
+            printout (bool, optional): Choose to save the plot to a file.
+            returns (bool, optional): Choose to return the difference value.
+
+        Returns:
+            (list): difference value for each node.             
+        """
+        
+        diffs, neighbours, centers= self.get_diffs()
+        fig= self.get_fig()
+
+        ax = hx.plot_hex(fig, centers, diffs, edges=colors, radius=self.radius, cmap=self.cmap)
+        ax.set_title('Weights Difference', size=self.text_size)
             
+        if self.bar:
             divider = make_axes_locatable(ax)
             cax = divider.append_axes("right", size="5%", pad=0.0)
             cbar=plt.colorbar(ax.collections[0], cax=cax)
-            cbar.set_label('Weights Difference', size=80, labelpad=50)
-            cbar.ax.tick_params(labelsize=60)
-            plt.sca(ax)
+            cbar.ax.tick_params(labelsize=self.text_size)
+        plt.sca(ax)
 
-            printName=os.path.join(path,'nodesDifference.png')
-            
-            if printout==True:
-                plt.savefig(printName, bbox_inches='tight', dpi=dpi)
-            if show==True:
+        printName=os.path.join(self.path,'SOM_difference.png')
+          
+        if not return_ax_only:
+            if self.printout==True:
+                plt.savefig(printName, bbox_inches='tight', dpi=self.dpi)
+            if self.show==True:
                 plt.show()
-            if show!=False and printout!=False:
+            if self.show!=False and self.printout!=False:
                 plt.clf()
+                
+        return ax
 
-        if returns==True:
-            return diffs 
-
-    def project(self, array, colnum=-1, labels=[], show=False, printout=True, path='./', colname = None):
+    def project(self, array, colnum=-1, colname= None, 
+                plot_mode='number', show_clusters=False, return_only=False):
 
         """Project the datapoints of a given array to the 2D space of the 
             SOM by calculating the bmus. If requested plot a 2D map with as 
@@ -345,87 +389,84 @@ class somNet:
             show (bool, optional): Choose to display the plot.
             printout (bool, optional): Choose to save the plot to a file.
             colname (str, optional): Name of the column to be shown on the map.
+            plot_mode (str, optional): How to plot the number of datapoints: as 'number' or as 'scatter'
             
         Returns:
             (list): bmu x,y position for each input array datapoint. 
             
-        """
-        
+        """            
         if not colname:
             colname = str(colnum)
 
-        if labels != []:
-            colors = ['#a6cee3','#1f78b4','#b2df8a','#33a02c','#fb9a99','#e31a1c',
-            		  '#fdbf6f','#ff7f00','#cab2d6','#6a3d9a','#ffff99','#b15928']
-            class_assignment = {}
-            counter = 0
-            for i in range(len(labels)):
-                if labels[i] not in class_assignment:
-                    class_assignment[labels[i]] = colors[counter]
-                    counter = (counter + 1)%len(colors)
-
-        bmuList,cls=[],[]
+        hash_point= lambda p: round(p[0], 2)*1000 + round(p[1], 2)  
+        bmuList, cls, points_per_node=[], [], {}
         for i in range(array.shape[0]):
-            bmuList.append(self.find_bmu(array[i,:]).pos)   
+            point= self.find_bmu(array[i,:])[0].pos
+            hashed_point= hash_point(point)
+            bmuList.append(point)
+            
+            if hashed_point in points_per_node:
+                points_per_node[hashed_point][1]+= 1
+            else:
+                points_per_node[hashed_point]= [np.array(point), 1]
+                
             if self.colorEx==True:
                 cls.append(array[i,:])
             else: 
-                if labels!=[]:   
-                    cls.append(class_assignment[labels[i]])
-                elif colnum==-1:
+                if colnum==-1:
                     cls.append('#ffffff')
                 else: 
                     cls.append(array[i,colnum])
 
-        if show==True or printout==True:
-        
-            """ Call nodes_graph/diff_graph to first build the 2D map of the nodes. """
-
+        if (self.show==True or self.printout==True) and not return_only:
+            if show_clusters:
+                raise NotImplementedError('TO DO: Show clusters around cells as edges')
+                #_, colors= self.get_clusters()
+            else:
+                colors= []
+            
+            #Call nodes_graph/diff_graph to first build the 2D map of the nodes
             if self.colorEx==True:
-                printName=os.path.join(path,'colorProjection.png')
+                printName=os.path.join(self.path,'colorProjection.png')
                 self.nodes_graph(colnum, False, False)
                 plt.scatter([pos[0] for pos in bmuList],[pos[1] for pos in bmuList], color=cls,  
                         s=500, edgecolor='#ffffff', linewidth=5, zorder=10)
-                plt.title('Datapoints Projection', size=80)
-            else:
-                #a random perturbation is added to the points positions so that data 
-                #belonging plotted to the same bmu will be visible in the plot      
-                if colnum==-1:
-                    printName=os.path.join(path,'projection_difference.png')
-                    self.diff_graph(False, False, False)
-                    plt.scatter([pos[0]-0.125+np.random.rand()*0.25 for pos in bmuList],[pos[1]-0.125+np.random.rand()*0.25 for pos in bmuList], c=cls, cmap=cm.viridis,
-                            s=400, linewidth=0, zorder=10)
-                    plt.title('Datapoints Projection on Nodes Difference', size=80)
-                else:   
-                    printName=os.path.join(path,'projection_'+ colname +'.png')
-                    self.nodes_graph(colnum, False, False, colname=colname)
-                    plt.scatter([pos[0]-0.125+np.random.rand()*0.25 for pos in bmuList],[pos[1]-0.125+np.random.rand()*0.25 for pos in bmuList], c=cls, cmap=cm.viridis,
-                            s=400, edgecolor='#ffffff', linewidth=4, zorder=10)
-                    plt.title('Datapoints Projection #' +  str(colnum), size=80)
+                plt.title('Datapoints Projection', size=20)
                 
-            if labels!=[]:
-                recs = []
-                for i in class_assignment.keys():
-                    recs.append(mpatches.Rectangle((0,0),1,1,fc=class_assignment[i]))
-                plt.legend(recs,class_assignment.keys(),loc=0)
-
-            # if labels!=[]:
-            #     for label, x, y in zip(labels, [pos[0] for pos in bmuList],[pos[1] for pos in bmuList]):
-            #         plt.annotate(label, xy=(x,y), xytext=(-0.5, 0.5), textcoords='offset points', ha='right', va='bottom', size=50, zorder=11) 
+            else:   
+                if colnum==-1:
+                    printName=os.path.join(self.path,'SOM_projection_difference.png')
+                    ax= self.diff_graph(return_ax_only=True, colors=colors)
+                    ax.set_title('Datapoints Projection on Weights Difference', size=20)
+                else:
+                    printName=os.path.join(self.path,'SOM_projection_'+str(colnum if colname is None else colname)+'.png')
+                    ax= self.nodes_graph(colnum, colname=colname, return_ax_only=True, colors=colors)
+                    
+                if plot_mode=='scatter':
+                    #A random perturbation is added to the points positions so that data 
+                    #belonging plotted to the same bmu will be visible in the plot  
+                    plt.scatter([pos[0]-0.125+np.random.rand()*0.25 for pos in bmuList],
+                                [pos[1]-0.125+np.random.rand()*0.25 for pos in bmuList], c=cls, cmap=cm.viridis,
+                                s=400, linewidth=0, zorder=10)
+                elif plot_mode=='number':
+                    for _,(point, repetitions) in points_per_node.items():
+                        plt.annotate(repetitions, color='w',
+                                     xy=point-0.15*min(1, repetitions*10/30), size=min(30/100*self.widthP, repetitions*10))
+                else:
+                    pass
             
-            if printout==True:
-                plt.savefig(printName, bbox_inches='tight', dpi=72)
-            if show==True:
+            if self.printout==True:
+                plt.savefig(printName, bbox_inches='tight', dpi=self.dpi)
+            if self.show==True:
                 plt.show()
             plt.clf()
         
-        """ Print the x,y coordinates of bmus, useful for the clustering function. """
-        
+        #Return the x,y coordinates of bmus, useful for the clustering function.
         return [[pos[0],pos[1]] for pos in bmuList] 
         
         
-    def cluster(self, array, type='qthresh', cutoff=5, quant=0.2, percent=0.02, numcl=8,\
-                    savefile=True, filetype='dat', show=False, printout=True, path='./'):
+    def find_clusters(self, array, type='qthresh', cutoff=5, quant=0.2, percent=0.02, numcl=8,\
+                savefile=True, filetype='dat'):
     
         """Clusters the data in a given array according to the SOM trained map.
             The clusters can also be plotted.
@@ -433,7 +474,8 @@ class somNet:
         Args:
             array (np.array): An array containing datapoints to be clustered.
             type (str, optional): The type of clustering to be applied, so far only quality threshold (qthresh) 
-                algorithm is directly implemented, other algorithms require sklearn.
+                and density peak algorithma are directly implemented, other algorithms require sklearn, and do not
+                support PBC
             cutoff (float, optional): Cutoff for the quality threshold algorithm. This also doubles as
                 maximum distance of two points to be considered in the same cluster with DBSCAN.
             percent (float, optional): The percentile that defines the reference distance in density peak clustering (dpeak).
@@ -451,28 +493,21 @@ class somNet:
 
         """ Call project to first find the bmu for each array datapoint, but without producing any graph. """
 
-        bmuList = self.project(array, show=False, printout=False)
+        bmuList= self.project(array, return_only=True)
         clusters=[]
 
         if type=='qthresh':
-            
-            """ Cluster according to the quality threshold algorithm (slow!). """
-    
+            #Cluster according to the quality threshold algorithm (slow!).
             clusters = qt.qualityThreshold(bmuList, cutoff, self.PBC, self.netHeight, self.netWidth)
 
         elif type=='dpeak':
-
-            """ Cluster according to the density peak algorithm. """
-
+            #Cluster according to the density peak algorithm.
             clusters = dp.densityPeak(bmuList, PBC=self.PBC, netHeight=self.netHeight, netWidth=self.netWidth)
 
         elif type in ['MeanShift', 'DBSCAN', 'KMeans']:
-        
-            """ Cluster according to algorithms implemented in sklearn. """
-        
+            #Cluster according to algorithms implemented in sklearn.
             if self.PBC==True:
                 print("Warning: Only Quality Threshold and Density Peak clustering work with PBC")
-
             try:
         
                 if type=='MeanShift':
@@ -499,10 +534,9 @@ class somNet:
                 raise
         else:
             sys.exit("Error: unkown clustering algorithm " + type)
-
         
         if savefile==True:
-            file=open(os.path.join(path,type+'_clusters.'+filetype), 'w')
+            file=open(os.path.join(self.path,'SOM_' + type + '_clusters.' + filetype), 'w')
             if filetype=='csv':
                 separator=','
             else: 
@@ -511,39 +545,95 @@ class somNet:
                 for id in line: file.write(str(id)+separator)
                 file.write('\n')
             file.close()
+                
+        xc, yc, color=[],[],[]
+        for i in range(len(clusters)):
+            for c in clusters[i]:
+                #again, invert y and x to be consistent with the previous maps
+                xc.append(bmuList[int(c)][0])
+                yc.append(self.netHeight-bmuList[int(c)][1])  
+                color.append(i/len(clusters))
         
-        if printout==True or show==True:
-            
-            np.random.seed(0)
-            printName=os.path.join(path,type+'_clusters.png')
-            
-            fig, ax = plt.subplots()
-            
-            for i in range(len(clusters)):
-                randCl = "#%06x" % np.random.randint(0, 0xFFFFFF)
-                xc,yc=[],[]
-                for c in clusters[i]:
-                    #again, invert y and x to be consistent with the previous maps
-                    xc.append(bmuList[int(c)][0])
-                    yc.append(self.netHeight-bmuList[int(c)][1])    
-                ax.scatter(xc, yc, color=randCl, label='cluster'+str(i))
+        if self.printout==True or self.show==True:
+            printName=os.path.join(self.path,'SOM_' + type + '_clusters.png')
+                        
+            fig= self.get_fig()
+            #ax.scatter(xc, yc, color=color, label='Cluster %d'%(i))
+            ax = hx.plot_hex(fig, list(zip(xc, yc)), color, cmap='Set3', radius=self.radius)
+            ax.set_title('Clusters', size=self.text_size)
+            plt.sca(ax)
 
             plt.gca().invert_yaxis()
-            plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)           
-            ax.set_title('Clusters')
             ax.axis('off')
-
-            if printout==True:
-                plt.savefig(printName, bbox_inches='tight', dpi=600)
-            if show==True:
+                
+            if self.printout==True:
+                plt.savefig(printName, bbox_inches='tight', dpi=self.dpi)
+            if self.show==True:
                 plt.show()
             plt.clf()   
             
-        return clusters
+        self.clusters, self.xc, self.yc, self.color = clusters, xc, yc, color
+        
+    def get_clusters(self):
+        if self.clusters==[]:
+            raise ValueError('Clusters not yet computed, please run find_clusters() before')
+        return self.clusters, self.color
+    
+    def show_exogenous(self, array, exogenous, colname=None):
+    
+        """Plots an exogenous variable into the grid
 
+        Args:
+            array (np.array): An array containing datapoints to be clustered.
+            array (np.array): An array containing the value of the variable to be plotted
+            
+        Returns:
+            ax: The matplotlib.pyplot ax
+            
+        """
+
+        hash_point= lambda p: round(p[0], 2)*1000 + round(p[1], 2)  
+        mean_per_node= {} # hash_point: (point_coords, sum, N) 
+        
+        for row, ex in zip(array, exogenous):
+            point= self.find_bmu(row)[0].pos
+            hashed_point= hash_point(point)
+            
+            if hashed_point in mean_per_node:
+                mean_per_node[hashed_point][2]+= 1
+                mean_per_node[hashed_point][1]+= ex
+            else:
+                mean_per_node[hashed_point]= [np.array(point), ex, 1]
+                
+        points= [point for _,(point, s, N) in mean_per_node.items()]
+        values= [s/N for _,(point, s, N) in mean_per_node.items()]
+                    
+        printName= os.path.join(self.path, 'SOM_%s.png'%('exogenous' if colname is None else colname))
+                        
+        fig= self.get_fig()
+        cmap= 'Set3' if len(np.unique(exogenous)) < 8 else self.cmap #Use a set cmap if the exog. var. is a class.
+        ax = hx.plot_hex(fig, points, values, cmap=cmap, radius=self.radius)
+        ax.set_title('Exogenous variable' if colname is None else colname, size=self.text_size)
+        
+        if self.bar:
+            divider = make_axes_locatable(ax)
+            cax = divider.append_axes("right", size="5%", pad=0.0)
+            cbar=plt.colorbar(ax.collections[0], cax=cax)
+            cbar.ax.tick_params(labelsize=self.text_size)
+        
+        plt.sca(ax)
+
+        plt.gca().invert_yaxis()
+        ax.axis('off')
+                
+        if self.printout==True:
+            plt.savefig(printName, bbox_inches='tight', dpi=self.dpi)
+        if self.show==True:
+            plt.show()
+        plt.clf()   
         
 class somNode:
-
+    
     """ Single Kohonen SOM Node class. """
     
     def __init__(self, x, y, numWeights, netHeight, netWidth, PBC, minVal=[], maxVal=[], pcaVec=[], weiArray=[]):
